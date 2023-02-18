@@ -1,0 +1,377 @@
+
+## Assignment #1
+
+Connor Ward
+
+Consulted with Areez Gangji, Bryan Durnin and Kelston Chen.
+
+## Question #1:
+
+```{r, include=FALSE}
+library(rsample)
+library(tidyverse)
+library(matlib)
+library(ggplot2)
+library(jtools)
+library(broom)
+library(gridExtra)
+library(dplyr)
+library(psych)
+library(regclass)
+library(FNN)
+library(class)
+library(grid)
+library(glmnet)
+library(ISLR)
+library(stargazer)
+library(lmtest)
+library(sandwich)
+library(gridExtra)
+standardized <- function(x){(x-mean(x))/sd(x)}
+RMSE <- function(actual, predict) {
+  sqrt(mean((actual - predict)^2))
+}
+
+```
+
+First plot data to identify shape.
+
+```{r, echo=FALSE}
+men2015 <- read.csv("C:/Users/wardc/Downloads/men2015.csv")
+menearn <- data.frame(men2015)
+
+boxplot(menearn$logearn~menearn$educ)
+
+hist(menearn$logearn)
+boxplot(menearn$age~menearn$educ)
+
+
+menearn$educ <- as.factor(menearn$educ)
+menearn$educ <- relevel(menearn$educ, ref = "2")
+
+
+```
+
+
+Observations are distributed fairly evenly across groups. To get a sense of any 
+potential patterns and relationships in the data, plot the distribution of 
+earnings at each age level for each education group. 
+
+
+
+```{r, echo=FALSE}
+boxplot(menearn$logearn~menearn$age)
+a1 <- (split(menearn, f = menearn$educ))$"1"
+boxplot(a1$logearn~a1$age)
+a2 <- (split(menearn, f = menearn$educ))$"2"
+boxplot(a2$logearn~a2$age)
+a3 <- (split(menearn, f = menearn$educ))$"3"
+boxplot(a3$logearn~a3$age)
+a4 <- (split(menearn, f = menearn$educ))$"4"
+boxplot(a4$logearn~a4$age)
+a5 <- (split(menearn, f = menearn$educ))$"5"
+boxplot(a5$logearn~a5$age)
+```
+
+Ploting the data we can see that the median earnings increases with
+education across all age groups. The median of the distribution of
+earnings across all age groups has a slight slope where earnings appear
+to decrease at the older age groups across all the different education
+levels. This makes intuitive sense, since we are tracking weekly
+earnings income may fall as people enter retirement age. With this in
+mind I estimated two linear models one with education as a factor and
+age as a continuous variable and one with age and age squared along with
+education as a factor.
+
+Looking at the above plots we can see that median earnings increase into middle age before falling as individuals enter retirement age. Running a regression of age and age squared we should expect that the 
+coefficient on the squared age term is negative and that the coefficient
+on the constant age term is positive.
+
+```{r}
+LinModel1 <- lm(logearn ~ poly(age, degree = 1) + educ , menearn)
+robust1 <- sqrt(diag(vcovHC(LinModel1, type = "HC1")))
+
+summary(LinModel1)
+VIF(LinModel1)
+
+LinModel2 <- lm(logearn ~ poly(age, degree = 2) + educ , menearn)
+robust2 <- sqrt(diag(vcovHC(LinModel2, type = "HC1")))
+summary(LinModel2)
+VIF(LinModel2)
+
+
+```
+
+After running the models there is a multicolinearity problem with the
+second model, but the signs match our expectation and the model fit
+improves.
+
+Adding the consideration that the data is likely heteroskedastic and estimating 
+coefficient significance with robust standard errors.
+
+```{r}
+coeftest(LinModel2, vcov. = vcovHC(LinModel2, type = "HC2"))
+```
+
+The model coefficients are still significant after adding
+Heteroskedastic robust standard errors. This implies that the polynomial term is
+effectively capturing the nonlinearity in the data. 
+
+## Question #2
+
+Use Linear Model two to predict values and add confidence interval.
+
+```{r}
+a <- data.frame(age = c(30,40,50,60,70,30,40,50,60,70),
+                educ =c(4,4,4,4,4,5,5,5,5,5))
+a$educ <- as.factor(a$educ)
+
+predict.values <- predict(LinModel2, a, interval = "confidence", level=0.95)
+
+
+predict.values <- as.data.frame(predict.values)
+# plot the predicted values and their confidence intervals
+
+predict.values <- cbind.data.frame(a$age, a$educ, predict.values)
+grid.newpage()
+grid.table(predict.values)
+```
+
+The intervals we observe for the Linear model seem to understate the variance in the data. For observations with similar characteristics that we see in the data values seem to fall well outside the confidence intervals chosen by the linear model. 
+
+## Question #3:
+
+KNN model using all data as training data first running the model with
+unscaled data, then rerunning the model with scaled data.
+
+```{r}
+
+age.scaled <- scale(menearn$age)
+#create dummies
+educ.dummies <- model.matrix(~ factor(menearn$educ) - 1, data = menearn)
+#using 2 as base since it has the most observations
+educ.dummies <- educ.dummies[,-2]
+
+data.unscaled <- cbind.data.frame(menearn$logearn, menearn$age, educ.dummies)
+data.scaled <- cbind.data.frame(menearn$logearn, age.scaled, educ.dummies)
+
+Results <- matrix(, nrow = 300, ncol = 4)
+colnames(Results) <- c("Unscaled_R2", "Unscaled_k", "Scaled_R2", "Scaled_k")
+for (i in 1:300) {
+  knn.unscaled <- knn.reg(train = data.unscaled[,2:6], test = NULL, y = data.unscaled[,1], k = i)
+  knn.scaled <- knn.reg(train = data.scaled[,2:6], test = NULL, y = data.scaled[,1] , k = i)
+  Results[i,1] <- knn.unscaled$R2Pred
+  Results[i,2] <- knn.unscaled$k
+  Results[i,3] <- knn.scaled$R2Pred
+  Results[i,4] <- knn.scaled$k
+}
+j <- which.max(Results[,3])
+n <- which.max(Results[,1])
+knn.scaled <- knn.reg(train = data.scaled[,2:6], test = NULL, y = data.scaled[,1] , k = j)
+Results <- as.data.frame(Results)
+logResults <- cbind.data.frame(log(Results$Unscaled_k), log(Results$Unscaled_R2), log(Results$Scaled_R2))
+logResults <- na.omit(logResults)
+
+```
+
+```{r, echo=FALSE}
+ggplot(logResults, aes(x= `log(Results$Unscaled_k)`, y= `log(Results$Scaled_R2)`)) +
+  geom_line() +
+  labs(x = "log(K)", y = "log(R2 Pred) for Scaled KNN", 
+       title = "Log(R2 Pred)", 
+       subtitle = "Scaled KNN") +
+  theme_classic()
+
+ggplot(logResults, aes(x= `log(Results$Unscaled_k)`, y= `log(Results$Unscaled_R2)`)) +
+  geom_line() +
+  labs(x = "log(K)", y = "log(R2 Pred) for UnScaled KNN", 
+       title = "Log(R2 Pred)", 
+       subtitle = "Unscaled KNN") +
+  theme_classic()
+```
+
+The KNN model with unscaled data finds an optimum R2 with a lower K than
+the KNN model with scaled Data. We end up with a larger optimal value of K than what is encountered in our text, 
+this could be because we have more observations in the log earnings data set than we saw in the examples in the text. A K value of one would imply that our model is over fitting the data and larger values of K would imply that more observations fit into a particular group. When we use unscaled data the model has a harder time finding reasonable comparisons so it chooses a lower optimum value of K. When we scale our data we end up with a higher value of K and one that is closer to resembling what the theoretical optimal value which is the square root of the number of observations in the data set. 
+
+## Question #4:
+
+predicting values using scaled KNN regression
+
+```{r}
+
+a.knn <- data.frame(age = c(30,40,50,60,70,30,40,50,60,70),
+                    educ1 = c(0,0,0,0,0,0,0,0,0,0),
+                    educ3 = c(0,0,0,0,0,0,0,0,0,0),
+                    educ4 = c(1,1,1,1,1,0,0,0,0,0),
+                    educ5 = c(0,0,0,0,0,1,1,1,1,1))
+a.knn$age <- standardized(a.knn$age)
+
+knn.scaled.test <- knn.reg(train = data.scaled[,2:6], test = a.knn, y = data.scaled[,1] , k = j)
+
+zz <- c(4,4,4,4,4,5,5,5,5,5)
+age = c(30,40,50,60,70,30,40,50,60,70)
+z <- cbind(age, zz,  knn.scaled.test$pred)
+colnames(z)<- c("Age", "Education","Scaled Predictions")
+print(z)
+
+```
+Using the KNN model trained on scaled data we see similar results to the linear model. Overall earnings are higher at a higher education level, but we see expected earnings reach an optimum with age before they start to decline. 
+
+
+These predictions match our expectation that earnings
+increase with age up to a point, then they start to decrease. The
+predictions also match what we saw in box plot of education over earnings
+where the median of log earnings was higher for the group with educ five
+than for the group with educ 4.
+
+Using the model trained on scaled data should give more robust estimates since its not over fitting the data by choosing a low optimal value for K. Since KNN is based on euclidean distance not scaling the data makes it difficult for the model to correctly identify nearest neighbors. 
+
+Compared to the Linear model, the predicted values of KNN have a similar shape, but with a more pronounced curve with age. This is likely because KNN is better able to fit the non linearity in the data than the Linear model even when we include a polynomial. 
+
+## Question #5:
+
+Split the data and test the performance of the linear model
+
+```{r}
+set.seed(100)
+split.lm <- initial_split(menearn, 0.5)
+train.lm <- training(split.lm)
+test.lm <- testing(split.lm)
+train.lm$educ <- as.factor(train.lm$educ)
+test.lm$educ <- as.factor(test.lm$educ)
+train.lm$educ <- relevel(train.lm$educ, ref = "2")
+test.lm$educ <- relevel(test.lm$educ, ref =  "2")
+
+LinModel2.split <- lm(logearn ~ poly(age, degree = 2) + educ,data=train.lm)
+Linmodel2.split.prediction <- predict(LinModel2.split, test.lm, interval = "confidence", level = 0.95)
+summary(LinModel2.split)
+summary(LinModel2)
+```
+
+The coefficients change after splitting the data which suggests that the seed and the split are important for the model predictions. Re-testing the simulations given the values from question two with the new model:
+```{r}
+a1 <- data.frame(age = c(30,40,50,60,70,30,40,50,60,70),
+                educ =c(4,4,4,4,4,5,5,5,5,5))
+a1$educ <- as.factor(a$educ)
+
+predict.values.split <- predict(LinModel2.split, newdata = a1, interval= "confidence", level=0.95)
+
+
+predict.values.split <- as.data.frame(predict.values.split)
+# plot the predicted values and their confidence intervals
+
+predict.values.split <- cbind.data.frame(a$age, a$educ, predict.values.split)
+grid.newpage()
+grid.table(predict.values.split)
+
+```
+Compared to question 2 we get a different set of predictions given a subset of the same observations. With the Linear model splitting the data at random to generate a new data set leads to different coefficients and different predictions. While the coefficients are different in magnitudes the signs on the coefficients remain the same, which implies that even with a smaller training set the distribution of data isn't being changed significantly enough that the linear model with polynomials isn't able to identify the shape of the data. 
+
+
+## Question #6:
+
+estimate the Knn model using the training data
+
+```{r}
+menearn <- menearn[,-4]
+set.seed(100)
+split.knn <- initial_split(data.scaled, 0.5)
+train.knn <- training(split.knn)
+test.knn <- training(split.knn)
+
+train.knn.rsquared <- matrix(,nrow= 300, ncol = 2)
+colnames(train.knn.rsquared) <- c("k", "R.squared.pred")
+
+for (i in 1:300) {
+  train.knn.model <- knn.reg(train = train.knn[,2:6], y = train.knn[,1], k = i)
+  train.knn.rsquared[i,1] <- train.knn.model$k
+  train.knn.rsquared[i,2] <- train.knn.model$R2Pred
+}
+e <- which.max(train.knn.rsquared[,2])
+print(train.knn.rsquared[e,])
+train.knn.model <- knn.reg(train = train.knn[,2:6], y = train.knn[,1], k = e)
+```
+
+```{r, echo=FALSE}
+#plot(train.knn.rsquared[,1], train.knn.rsquared[,2])
+train.knn.rsquared <- as.data.frame(train.knn.rsquared) 
+
+LOG_R2_PRED <- log(train.knn.rsquared$R.squared.pred)
+Log_K <- log(train.knn.rsquared$k)
+logDF <- cbind(Log_K, LOG_R2_PRED)
+colnames(logDF) <- c("log(K)", "log(R2_pred)")
+logDF <- as.data.frame(logDF)
+logDF <- na.omit(logDF)
+ggplot(logDF, aes(x = `log(K)` , y = `log(R2_pred)` )) +
+  geom_line() +
+  labs(x = "log(K)", y = "log(R2 Pred)", 
+       title = "R2 Pred", 
+       subtitle = "Trainin scaled data set KNN") +
+  theme_classic()
+```
+
+The optimal k does depend on the size of the sample, with fewer observations the number of nearby neighbors decreases significantly. The random draw can also effect the optimal value of K by changing the distribution of the test data set. We can observe this by re-running the previous simulation and changing the seed. 
+
+```{r}
+menearn <- menearn[,-4]
+set.seed(300)
+split.knn <- initial_split(data.scaled, 0.5)
+train.knn <- training(split.knn)
+test.knn <- training(split.knn)
+
+train.knn.rsquared <- matrix(,nrow= 300, ncol = 2)
+colnames(train.knn.rsquared) <- c("k", "R.squared.pred")
+
+for (i in 1:300) {
+  train.knn.model <- knn.reg(train = train.knn[,2:6], y = train.knn[,1], k = i)
+  train.knn.rsquared[i,1] <- train.knn.model$k
+  train.knn.rsquared[i,2] <- train.knn.model$R2Pred
+}
+e <- which.max(train.knn.rsquared[,2])
+print(train.knn.rsquared[e,])
+train.knn.model <- knn.reg(train = train.knn[,2:6], y = train.knn[,1], k = e)
+```
+After re-running the simulation with a different seed to generate a different random draw we end up with a significantly different value of K. We should have an optimal value of K around 127 if we expect that the optimal K is near the square root of the total number of observations in the data set, but the model is over fitting our training data set. 
+
+## Question #7:
+
+Comparing the performance of the KNN model with training data with the
+Linear model and training data. Given a set of observations which model
+is more effective at predicting log earnings.
+
+```{r}
+# For the Linear Model
+Linmodel2.split.prediction <- predict(LinModel2.split, test.lm, interval = "confidence", level = 0.95)
+Linmodel2.split.prediction <- cbind.data.frame(test.lm$logearn, Linmodel2.split.prediction)
+RMSELIN <- RMSE(actual = test.lm$logearn , predict = Linmodel2.split.prediction$fit)
+# For the KNN model
+knn.model.test <- knn.reg(train = train.knn[,2:6], test = test.knn[,2:6], y = train.knn[,1], k = e)
+RMSEKNN <- RMSE(actual =  test.knn$`menearn$logearn`, predict = knn.model.test$pred )
+
+
+```
+
+```{r, echo=FALSE}
+z <- cbind(RMSEKNN, RMSELIN)
+colnames(z) <- c("RMSE KNN", "RMSE Linear Model")
+hist((test.lm$logearn - Linmodel2.split.prediction$fit))
+hist((test.knn$`menearn$logearn` - knn.model.test$pred))
+grid.newpage()
+grid.table(z)
+```
+We can see that the distribution of prediction errors looks similar for both models and they both preform similar in terms of Root Mean Square Error. This suggests that with this data set the Linear model with polynomials is able to identity the shape of the data and make predictions similar to the KNN model. In this case its easier to make inferences using the linear model, the linear model also matches what we would intuitively think about age earnings and education, therefor with this data I would recommend using the linear model. 
+
+
+
+
+
+
+
+
+
+
+
+
+Ward, Connor
+
